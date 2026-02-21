@@ -1,0 +1,36 @@
+# Environment - NEVER push these
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Trained models - too large for GitHub
+ml/saved/*.pkl
+
+# Data files - sensitive business data
+data/*.csv
+
+# Output files
+output/
+*.csv
+user_matches.csv
+match_results.csv
+ml_match_results.csv
+ml_predictions.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
