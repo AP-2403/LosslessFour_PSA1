@@ -310,7 +310,7 @@ def run_match_for_user_supabase(
     # ── Match pairs ───────────────────────────────────────────────────
     print("🔗 Matching …")
     adjuster = NewsRiskAdjuster(news, lookback_days=NEWS_LOOKBACK_DAYS)
-    engine   = MatchmakingEngine(user_df, buyers, adjuster, top_n=len(buyers))
+    engine = MatchmakingEngine(user_df, buyers, adjuster, top_n=100)
     matches  = engine.run()
 
     # ── ML match score ────────────────────────────────────────────────

@@ -36,7 +36,10 @@ class DataCleaner:
         cat_cols = df.select_dtypes(include="object").columns
 
         df[num_cols] = df[num_cols].fillna(df[num_cols].median())
-        df[cat_cols] = df[cat_cols].fillna("Unknown")
+        id_cols   = [c for c in cat_cols if c in ("Exporter_ID", "Record_ID", "Buyer_ID")]
+        fill_cols = cat_cols.difference(id_cols)
+        df[fill_cols] = df[fill_cols].fillna("Unknown")
+        df = df.dropna(subset=["Exporter_ID"])  # drop rows with no Exporter_ID
 
         # Domain clips
         df["Manufacturing_Capacity_Tons"] = df["Manufacturing_Capacity_Tons"].clip(lower=0)
@@ -66,7 +69,10 @@ class DataCleaner:
         cat_cols = df.select_dtypes(include="object").columns
 
         df[num_cols] = df[num_cols].fillna(df[num_cols].median())
-        df[cat_cols] = df[cat_cols].fillna("Unknown")
+        id_cols   = [c for c in cat_cols if c in ("Buyer_ID", "Record_ID", "Exporter_ID")]
+        fill_cols = cat_cols.difference(id_cols)
+        df[fill_cols] = df[fill_cols].fillna("Unknown")
+        df = df.dropna(subset=["Buyer_ID"])  # drop rows with no Buyer_ID
 
         # Domain clips
         df["Intent_Score"]          = df["Intent_Score"].clip(0, 100)
