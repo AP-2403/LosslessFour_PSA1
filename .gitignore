@@ -34,3 +34,16 @@ Thumbs.db
 
 # Logs
 *.log
+# Dependency folders
+node_modules/
+venv/
+env/
+.env
+
+# Python caches and models
+__pycache__/
+ml/saved/*.pkl
+
+# Build outputs
+build/
+dist/
