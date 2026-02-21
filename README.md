@@ -1,148 +1,242 @@
-# Swipe to Export — Intelligent Trade Matchmaking Engine
+# 🌍 model_exim — Swipe to Export
 
-> Algorithm-first EXIM platform that matches Indian exporters with global buyers
-> using trade signals, behavioural data, and real-time geopolitical risk scoring.
+An AI-powered B2B matchmaking engine that connects Indian exporters with global buyers using ML-based intent scoring, risk-adjusted news signals, and smart similarity matching.
 
 ---
 
-## Project Structure
+## 📌 What It Does
+
+- Takes an exporter's profile (industry, capacity, certifications, target markets, etc.)
+- Scores them against thousands of global buyers
+- Adjusts matches using real-time news risk signals (tariffs, wars, calamities, currency shifts)
+- Ranks buyers by ML-predicted match score
+- Returns a ranked list of best-fit buyers with match labels (Excellent / Good / Fair / Weak)
+
+---
+
+## 🗂️ Project Structure
 
 ```
-swipe_to_export/
-├── main.py                   # Pipeline orchestrator + CLI entry point
-├── config.py                 # All weights, constants & mappings (edit here to tune)
-├── requirements.txt
-│
+model_exim/
 ├── data/
-│   ├── __init__.py
-│   ├── generator.py          # Synthetic demo data for all 3 schemas
-│   └── cleaner.py            # Imputation, clipping, validation
-│
-├── scoring/
-│   ├── __init__.py
-│   └── engine.py             # Weighted sub-score → 0-100 composite scores
-│
-├── news/
-│   ├── __init__.py
-│   └── risk_adjuster.py      # Macro/geopolitical risk delta from news feed
+│   ├── cleaner.py                        # Data cleaning pipeline
+│   ├── generator.py                      # Synthetic data generator
+│   ├── Exporter_LiveSignals_v5_Updated.csv
+│   ├── Importer_LiveSignals_v5_Updated.csv
+│   └── Global_News_LiveSignals_Updated.csv
 │
 ├── matching/
-│   ├── __init__.py
-│   └── engine.py             # Cosine + euclidean similarity, ranked match pairs
+│   └── matcher.py                        # Vectorized matchmaking engine
 │
-└── output/
-    ├── __init__.py
-    ├── cards.py              # ASCII match card renderer
-    └── analytics.py         # Aggregated stats dashboard
+├── ml/
+│   ├── intent_model.py                   # ML intent scoring model
+│   ├── match_model.py                    # ML match scoring model
+│   ├── match_for_user.py                 # Main entry point (CLI + API)
+│   ├── train.py                          # Model training script
+│   ├── predict.py                        # Batch prediction
+│   ├── feature_importance.py             # Feature analysis
+│   └── saved/                            # Trained model files (not pushed to git)
+│       ├── intent_model.pkl
+│       └── match_model.pkl
+│
+├── news/
+│   └── risk_adjuster.py                  # News-based risk delta calculator
+│
+├── output/
+│   ├── analytics.py                      # Match analytics
+│   └── cards.py                          # Buyer card renderer
+│
+├── scoring/
+│   └── scorer.py                         # Exporter & buyer scoring engine
+│
+├── config.py                             # All weights, thresholds, constants
+├── main.py                               # Batch pipeline entry point
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## Quick Start
+## ⚙️ Setup
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/yourname/model_exim.git
+cd model_exim
+```
+
+### 2. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Set up environment variables
+Copy the example file and fill in your Supabase credentials:
+```bash
+cp .env.example .env
+```
+
+```env
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_KEY=your_supabase_anon_key
+```
+
+---
+
+## 🧠 Train the Models
+
+Before running matches, you need to train the intent and match models:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run with synthetic demo data
-python main.py
-
-# Run with your own CSVs
-python main.py \
-  --exporters exporters.csv \
-  --buyers    buyers.csv \
-  --news      news.csv \
-  --top_n     5 \
-  --cards     15 \
-  --output    match_results.csv
+python ml/train.py
 ```
+
+This saves `intent_model.pkl` and `match_model.pkl` to `ml/saved/`.
 
 ---
 
-## Input Schemas
+## 🚀 Run a Match
 
-### News CSV
-| Column | Type | Description |
-|---|---|---|
-| News_ID | str | Unique event ID |
-| Date | date | Publication date |
-| Region | str | Geographic region affected |
-| Event_Type | str | Tariff Change / War / Calamity / etc. |
-| Impact_Level | int 1-5 | Severity |
-| Affected_Industry | str | Industry vertical |
-| Tariff_Change | float | Delta (negative = reduction = opportunity) |
-| StockMarket_Shock | float | Market movement |
-| War_Flag | 0/1 | Active conflict signal |
-| Natural_Calamity_Flag | 0/1 | Disruption signal |
-| Currency_Shift | float | FX movement |
+### Demo mode (no Supabase needed)
+```bash
+python ml/match_for_user.py --demo
+```
+Generates a random mock exporter and matches them against all buyers.
 
-### Exporters CSV
-| Column | Type | Description |
-|---|---|---|
-| Exporter_ID | str | Unique ID |
-| Industry | str | Product vertical |
-| Manufacturing_Capacity_Tons | int | Annual capacity |
-| Revenue_Size_USD | int | Annual revenue |
-| Certification | str | ISO / FDA / CE / etc. |
-| Good_Payment_Terms | 0/1 | Flexible terms offered |
-| Intent_Score | float 0-100 | Platform engagement score |
-| Hiring_Signal | 0/1 | Active hiring = growth signal |
-| War_Risk / Natural_Calamity_Risk | float 0-1 | Exposure scores |
-| … | | See config.py for full list |
+### Real user from Supabase
+```bash
+python ml/match_for_user.py --user_id "your-supabase-uuid"
+```
 
-### Buyers CSV
-| Column | Type | Description |
-|---|---|---|
-| Buyer_ID | str | Unique ID |
-| Country | str | Buyer's country |
-| Industry | str | Sourcing vertical |
-| Avg_Order_Tons | int | Typical order size |
-| Good_Payment_History | 0/1 | Payment reliability |
-| Funding_Event | 0/1 | Recently funded = growth signal |
-| Response_Probability | float 0-1 | Likelihood to reply |
-| Preferred_Channel | str | Email / LinkedIn / WhatsApp / Phone |
-| … | | See config.py for full list |
+### Custom options
+```bash
+python ml/match_for_user.py --demo \
+  --buyers data/Importer_LiveSignals_v5_Updated.csv \
+  --news data/Global_News_LiveSignals_Updated.csv \
+  --output my_matches.csv
+```
+
+Output is saved as a CSV ranked by `Match_Score` descending.
 
 ---
 
-## Scoring Model
+## 📊 Scoring Model
 
-### Exporter Score (0-100)
-```
-reliability  (30%) = payment terms + response speed + certification
-capacity     (25%) = manufacturing tons + revenue + team + shipments
-intent       (25%) = intent index + hiring + LinkedIn + SalesNav signals
-risk         (20%) = INVERTED(tariff + war + calamity + stock impact)
-```
+### Exporter Score (0–100)
+| Component | Weight |
+|---|---|
+| Reliability (payment terms, response speed, certifications) | 30% |
+| Capacity (manufacturing, revenue, team, shipments) | 25% |
+| Intent (intent index, hiring, LinkedIn, SalesNav signals) | 25% |
+| Risk — inverted (tariff, war, calamity, stock impact) | 20% |
 
-### Buyer Score (0-100)
-```
-creditworthiness (30%) = payment history + funding + revenue + certification
-engagement       (20%) = engagement spike + profile visits + DM change
-intent           (25%) = intent index + hiring growth
-response         (15%) = response probability + prompt response speed
-risk             (10%) = INVERTED(tariff news + war + calamity + stock)
-```
+### Buyer Score (0–100)
+| Component | Weight |
+|---|---|
+| Creditworthiness (payment history, funding, revenue) | 30% |
+| Intent (intent index, hiring growth) | 25% |
+| Engagement (spike, profile visits, DM change) | 20% |
+| Response (probability + prompt response speed) | 15% |
+| Risk — inverted (tariff, war, calamity, stock) | 10% |
 
-### Match Score (0-100)
+### Match Score (0–100)
 ```
-base_similarity  = 55% cosine + 45% euclidean  (on normalised feature vectors)
+base_similarity  = 55% cosine + 45% euclidean (on normalised feature vectors)
 industry_bonus   = 0 if same industry, -30 if different
 capacity_align   = how well exporter capacity meets buyer order size
-news_delta       = ±macro risk adjustment from recent news events [-20, +10]
-engagement_bonus = funding event (3pt) + DM change (2.5pt) + spike (2pt) + hiring (1.5pt)
-cert_match       = +5 if both sides share the same non-null certification
+news_delta       = ±macro risk adjustment from recent news [-20, +10]
+engagement_bonus = funding (3pt) + DM change (2.5pt) + spike (2pt) + hiring (1.5pt)
+cert_match       = +5 if both sides share the same certification
+```
+
+### Match Labels
+| Score | Label |
+|---|---|
+| ≥ 90 | Excellent |
+| ≥ 75 | Good |
+| ≥ 60 | Fair |
+| < 60 | Weak |
+
+---
+
+## 📥 Input — Exporter Form Fields
+
+| Field | Type | Description |
+|---|---|---|
+| Company Name | str | Company name |
+| Industry | str | Agri-Foods / Steel / Textiles / Chemicals / etc. |
+| Country | str | Exporter's country |
+| Target Countries | list | UK, USA, Germany, UAE, etc. |
+| Manufacturing Capacity | int | Annual capacity in tons |
+| Annual Revenue | int | USD |
+| Certifications | str | ISO9001 / CE / FDA / None |
+| Good Payment Terms | bool | Flexible terms offered |
+| Prompt Response Score | float 1–10 | Response speed |
+| Team Size | int | Number of employees |
+| Currently Hiring? | bool | Hiring signal |
+| LinkedIn Activity | float | Low / Medium / High → 0–100 |
+
+> Risk fields (`War_Risk`, `Currency_Shift`, etc.) are auto-computed from the news pipeline — no user input needed.
+
+---
+
+## 📤 Output — Match CSV Columns
+
+| Column | Description |
+|---|---|
+| rank | Match rank (1 = best) |
+| Buyer_ID | Unique buyer identifier |
+| Country | Buyer's country |
+| Industry | Buyer's industry |
+| Match_Score | ML-predicted match score (0–100) |
+| Match_Label | Excellent / Good / Fair / Weak |
+| Rule_Match_Score | Rule-based score (pre-ML) |
+| buyer_overall_score | Buyer's composite score |
+| buyer_intent_score | Buyer's ML intent score |
+| Best_Channel | Email / LinkedIn / WhatsApp / Phone |
+| sim_score | Cosine + Euclidean similarity |
+| cap_score | Capacity alignment score |
+| news_score | News risk delta |
+| engage_score | Engagement bonus |
+
+---
+
+## 🔐 Environment Variables
+
+| Variable | Description |
+|---|---|
+| `SUPABASE_URL` | Your Supabase project URL |
+| `SUPABASE_KEY` | Your Supabase anon/service key |
+
+Never commit your `.env` file. Use `.env.example` as a template.
+
+---
+
+## 📦 Requirements
+
+```
+pandas
+numpy
+scikit-learn
+tqdm
+supabase
+python-dotenv
+```
+
+Install all with:
+```bash
+pip install -r requirements.txt
 ```
 
 ---
 
-## Configuration
+## 🛣️ Roadmap
 
-Edit **`config.py`** to change any weights, penalties, or thresholds without touching algorithm code:
-
-```python
-EXPORTER_WEIGHTS        = {"reliability": 0.30, "capacity": 0.25, ...}
-INDUSTRY_MISMATCH_PENALTY = 30.0
-NEWS_LOOKBACK_DAYS       = 90
-MATCH_TOP_N              = 5
-```
+- [x] ML intent scoring model
+- [x] Vectorized matchmaking engine
+- [x] News risk adjustment pipeline
+- [x] Supabase integration
+- [ ] FastAPI backend
+- [ ] Onboarding form → intent score pipeline
+- [ ] Frontend (React / Next.js)
+- [ ] Real-time match refresh on news update
