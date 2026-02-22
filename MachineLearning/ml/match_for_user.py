@@ -5,20 +5,18 @@ Fetches a user exporter's profile from Supabase,
 scores them against all buyers, and returns/saves
 a ranked match CSV sorted by ml_match_score descending.
 
-If Supabase is unavailable or --demo flag is passed,
-a random mock user profile is used instead.
-
 Usage:
     # Real user from Supabase
     python ml/match_for_user.py --user_id "your-supabase-uuid"
-
-    # Demo / no Supabase yet
-    python ml/match_for_user.py --demo
 """
 
-import sys, os, argparse, random
+import sys, os, argparse
 import pandas as pd
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load secret environment variables (SUPABASE_URL, SUPABASE_KEY)
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,8 +29,7 @@ from ml.match_model     import MatchModel
 from config             import NEWS_LOOKBACK_DAYS
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Replace the 4 path constants at the top with these:
-_ML_ROOT = r"C:\Users\Vipin\Downloads\exim_swipe\MachineLearning"  # MachineLearning/
+_ML_ROOT = r"C:\Users\Vipin\Downloads\exim_swipe\MachineLearning"
 
 INTENT_MODEL_PATH = os.path.join(_ML_ROOT, "ml",   "saved", "intent_model.pkl")
 MATCH_MODEL_PATH  = os.path.join(_ML_ROOT, "ml",   "saved", "match_model.pkl")
@@ -45,7 +42,7 @@ FIELD_MAP = {
     "company_name":             "Company_Name",
     "industry":                 "Industry",
     "hq_country":               "Country",
-    "target_countries":         "Target_Countries",   # List → join to "UK,Germany,UAE"
+    "target_countries":         "Target_Countries",
     "annual_revenue_usd":       "Revenue_Size_USD",
     "manufacturing_capacity":   "Manufacturing_Capacity_Tons",
     "certifications":           "Certification",
@@ -68,126 +65,76 @@ DEFAULTS = {
     "Target_Countries":            "",
 }
 
-
-# ── MOCK DATA — used when Supabase is not set up yet ─────────────────────────
-MOCK_COMPANIES = [
-    ("AutoParts Global",           "Auto Parts",      "India", "USA,Germany,UAE"),
-    ("ChemPro Solutions",          "Chemicals",       "India", "UAE,Singapore,UK"),
-    ("ElectroHub Exports",         "Electronics",     "India", "UK,USA,Singapore"),
-    ("BuildTech Engineering",      "Engineering",     "India", "USA,Germany,UAE"),
-    ("SoftServe IT",               "IT Software",     "India", "UK,USA,Singapore"),
-    ("MachineCraft Industries",    "Machinery",       "India", "Germany,USA,UAE"),
-    ("MediTech Exports",           "Medical Devices", "India", "USA,UK,Germany"),
-    ("PharmaLink India",           "Pharmaceuticals", "India", "UK,USA,Germany"),
-    ("SolarEdge Exports",          "Solar",           "India", "Germany,UAE,USA"),
-    ("TextileCraft Pvt. Ltd.",     "Textiles",        "India", "UK,France,USA"),
-]
-
-def generate_mock_user() -> dict:
-    company, industry, country, targets = random.choice(MOCK_COMPANIES)
-    mock = {
-        # Identity
-        "Exporter_ID":                 f"DEMO{random.randint(1000,9999)}",
-        "Company_Name":                company,
-        "Industry":                    industry,
-        "Country":                     country,
-        "Date":                        datetime.today().strftime("%Y-%m-%d"),
-        "Target_Countries":            targets,
-        # Capacity
-        "Manufacturing_Capacity_Tons": round(random.uniform(500, 15000), 0),
-        "Revenue_Size_USD":            round(random.uniform(200000, 5000000), 0),
-        "Team_Size":                   random.randint(10, 500),
-        "Shipment_Value_USD":          round(random.uniform(50000, 2000000), 0),
-        "Quantity_Tons":               round(random.uniform(100, 10000), 0),
-        # Reliability
-        "Good_Payment_Terms":          random.randint(0, 1),
-        "Prompt_Response_Score":       round(random.uniform(4, 10), 1),
-        "Certification":               random.choice(["ISO9001", "CE", "FDA", None]),
-        "MSME_Udyam":                  random.randint(0, 1),
-        # Intent signals
-        "Intent_Score":                round(random.uniform(40, 95), 1),
-        "Hiring_Signal":               random.randint(0, 1),
-        "LinkedIn_Activity":           round(random.uniform(0, 100), 1),
-        "SalesNav_ProfileViews":       random.randint(0, 500),
-        "SalesNav_JobChange":          random.randint(0, 1),
-        # Risk
-        "Tariff_Impact":               round(random.uniform(-0.3, 0.3), 2),
-        "War_Risk":                    round(random.uniform(0.0, 0.4), 2),
-        "Natural_Calamity_Risk":       round(random.uniform(0.0, 0.3), 2),
-        "StockMarket_Impact":          round(random.uniform(-0.2, 0.2), 2),
-        "Currency_Shift":              round(random.uniform(-0.2, 0.2), 2),
-    }
-    print("🎲 Using random mock user profile:")
-    print(f"   Company  : {mock['Company_Name']}")
-    print(f"   Industry : {mock['Industry']}")
-    print(f"   Country  : {mock['Country']}")
-    print(f"   Targets  : {mock['Target_Countries']}")
-    print(f"   Capacity : {mock['Manufacturing_Capacity_Tons']:,.0f} tons")
-    print(f"   Revenue  : ${mock['Revenue_Size_USD']:,.0f}")
-    print(f"   Intent   : {mock['Intent_Score']}")
-    return mock
-
 # ── Fetch from Supabase ───────────────────────────────────────────────────────
 def fetch_user_from_supabase(user_id: str) -> dict:
     """
     Pull exporter row from Supabase for the given user UUID.
-    Falls back to mock data if env vars are missing.
     """
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
 
     if not url or not key:
-        print("⚠️  SUPABASE_URL / SUPABASE_KEY not set — falling back to mock data.")
-        return generate_mock_user()
+        raise ValueError("❌ SUPABASE_URL or SUPABASE_KEY environment variables are missing from .env")
 
     try:
         from supabase import create_client
     except ImportError:
-        print("⚠️  supabase package not installed (run: pip install supabase) — using mock data.")
-        return generate_mock_user()
+        raise ImportError("❌ The 'supabase' package is not installed. Run: pip install supabase")
 
-    try:
-        client   = create_client(url, key)
-        response = (
-            client.table("exporters")
-                  .select("*")
-                  .eq("id", user_id)
-                  .single()
-                  .execute()
-        )
+    client   = create_client(url, key)
+    response = (
+        client.table("exporters")
+              .select("*")
+              .eq("user_id", user_id)
+              .execute()          # ← remove .single()
+    )
 
-        if not response.data:
-            print(f"⚠️  No row found for user_id='{user_id}' — using mock data.")
-            return generate_mock_user()
+    if not response.data or len(response.data) == 0:
+        raise ValueError(f"No exporter found for user_id='{user_id}'. Complete onboarding first.")
+    # Then take first row manually:
+    raw = response.data[0]  
+    user_row = {}
+    for sb_field, internal_field in FIELD_MAP.items():
+        value = raw.get(sb_field)
 
-        raw      = response.data
-        user_row = {}
-        for sb_field, internal_field in FIELD_MAP.items():
-            value = raw.get(sb_field)
+        if isinstance(value, list):
+            value = ",".join(str(v) for v in value)
 
-            # Convert List → comma string (target_countries, certifications)
-            if isinstance(value, list):
-                value = ",".join(str(v) for v in value)
+        if isinstance(value, bool):
+            value = int(value)
 
-            # Convert bool → int (good_payment_terms, is_hiring, linkedin_active)
-            if isinstance(value, bool):
-                value = int(value)
+        user_row[internal_field] = value if value is not None else DEFAULTS.get(internal_field, 0)
+        # ── Parse manufacturing_capacity ──────────────────────────────────
+        cap = user_row.get("Manufacturing_Capacity_Tons", 1000)
+        if isinstance(cap, str):
+            cap = cap.upper().replace("MT", "").replace("TONS", "").replace("HIGH", "5000").strip()
+            try:
+                parts = [float(x) for x in cap.split("-")]
+                user_row["Manufacturing_Capacity_Tons"] = int(sum(parts) / len(parts))
+            except:
+                # Map text values to numbers
+                text_map = {"HIGH": 5000, "MEDIUM": 2000, "LOW": 500, "VERY HIGH": 10000}
+                user_row["Manufacturing_Capacity_Tons"] = text_map.get(
+                    str(user_row.get("Manufacturing_Capacity_Tons", "")).upper().strip(), 1000
+                )
 
-            user_row[internal_field] = value if value is not None else DEFAULTS.get(internal_field, 0)
+# ── Parse team_size ───────────────────────────────────────────────
+        ts = user_row.get("Team_Size", 50)
+        if isinstance(ts, str):
+            try:
+                # "50-100" → average → 75
+                parts = [float(x) for x in ts.split("-")]
+                user_row["Team_Size"] = int(sum(parts) / len(parts))
+            except:
+                user_row["Team_Size"] = 50
 
-        user_row["Date"] = datetime.today().strftime("%Y-%m-%d")
-        print(f"✅ Loaded from Supabase: {user_row['Company_Name']} ({user_row['Industry']}, {user_row['Country']})")
-        return user_row
-
-    except Exception as e:
-        print(f"⚠️  Supabase error: {e} — falling back to mock data.")
-        return generate_mock_user()
-
+    user_row["Date"] = datetime.today().strftime("%Y-%m-%d")
+    print(f"✅ Loaded from Supabase: {user_row['Company_Name']} ({user_row['Industry']}, {user_row['Country']})")
+    return user_row 
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 def run_match_for_user_supabase(
-    user_id:            str  = None,
-    demo:               bool = False,
+    user_id:            str,
     buyer_csv:          str  = BUYER_CSV,
     news_csv:           str  = NEWS_CSV,
     intent_model_path:  str  = INTENT_MODEL_PATH,
@@ -197,56 +144,33 @@ def run_match_for_user_supabase(
 ) -> pd.DataFrame:
     """
     Main entry point for backend API or CLI.
-
-    Parameters
-    ----------
-    user_id  : Supabase UUID. If None or demo=True, uses mock data.
-    demo     : Force mock data (useful during development).
-    save_csv : False to only return DataFrame without writing file.
-
-    Returns
-    -------
-    pd.DataFrame — all matched buyers, Match_Score descending.
     """
-
     print("\n╔══════════════════════════════════════════════════════════╗")
     print("║        SWIPE TO EXPORT — User Match Generator           ║")
     print("╚══════════════════════════════════════════════════════════╝\n")
 
-    # ── Check models ──────────────────────────────────────────────────
     for path, name in [(intent_model_path, "IntentModel"), (match_model_path, "MatchModel")]:
         if not os.path.exists(path):
             raise FileNotFoundError(f"{name} not found at '{path}'. Run python ml/train.py first.")
 
-    # ── Get user profile ──────────────────────────────────────────────
-    if demo or not user_id:
-        print("🎲 Demo mode — generating random user profile …")
-        user_row = generate_mock_user()
-    else:
-        user_row = fetch_user_from_supabase(user_id)
-
+    user_row = fetch_user_from_supabase(user_id)
     target_countries = user_row.pop("Target_Countries", "")
 
-    # ── Build single-row DataFrame ────────────────────────────────────
     user_df         = pd.DataFrame([user_row])
     user_df["Date"] = pd.to_datetime(user_df["Date"])
 
-    # ── Load buyers & news ────────────────────────────────────────────
     print("\n📂 Loading buyers and news …")
     buyers = pd.read_csv(buyer_csv, parse_dates=["Date"])
     news   = pd.read_csv(news_csv,  parse_dates=["Date"])
     print(f"   Buyers: {len(buyers):,}  |  News: {len(news):,}")
 
-    # ── Clean ─────────────────────────────────────────────────────────
     print("🧹 Cleaning …")
     cleaner = DataCleaner()
     user_df = cleaner.clean_exporters(user_df)
     buyers  = cleaner.clean_buyers(buyers)
     news    = cleaner.clean_news(news)
 
-    # ── Score ─────────────────────────────────────────────────────────
     scorer  = ScoringEngine()
-    # Safety net — fill any scorer column missing from user profile
     scorer_defaults = {
         "Good_Payment_Terms":          0,
         "Prompt_Response_Score":       5.0,
@@ -269,11 +193,11 @@ def run_match_for_user_supabase(
     }
     for col, val in scorer_defaults.items():
         if col not in user_df.columns:
-            user_df[col] = val  # ← already there, don't duplicate
+            user_df[col] = val
+    
     user_df = scorer.score_exporters(user_df)
     buyers  = scorer.score_buyers(buyers)
 
-    # ── ML intent ─────────────────────────────────────────────────────
     print("🧠 ML intent scoring …")
     intent_model = IntentModel.load(intent_model_path)
     user_df["ml_intent_score"] = intent_model.predict_exporter_intent(user_df)
@@ -281,7 +205,6 @@ def run_match_for_user_supabase(
 
     user_df["Intent_Score"] = user_df["ml_intent_score"]
     buyers["Intent_Score"]  = buyers["ml_intent_score"]
-    # Safety net — fill any scorer column missing from user profile
 
     user_df = scorer.score_exporters(user_df)
     buyers  = scorer.score_buyers(buyers)
@@ -289,41 +212,31 @@ def run_match_for_user_supabase(
     print(f"   User intent score  : {user_df['ml_intent_score'].iloc[0]:.1f}")
     print(f"   User overall score : {user_df['exporter_score'].iloc[0]:.1f}")
 
-    # ── Filter by target countries ────────────────────────────────────
     if target_countries:
         targets  = [c.strip() for c in target_countries.split(",") if c.strip()]
         filtered = buyers[buyers["Country"].isin(targets)].copy()
         if len(filtered) > 0:
             print(f"🌍 Country filter → {len(filtered)} buyers in: {', '.join(targets)}")
-            buyers = filtered.reset_index(drop=True)   # ✅ fix index mismatch
+            buyers = filtered.reset_index(drop=True)
         else:
             print(f"⚠️  No buyers found in {targets} — showing all countries.")
-            buyers = buyers.reset_index(drop=True)     # ✅ fix index mismatch
+            buyers = buyers.reset_index(drop=True)
 
-    industry = str(user_row.get("Industry", "")).strip()       # ✅ dict → scalar string
+    industry = str(user_row.get("Industry", "")).strip()
     same_ind_buyers = buyers[buyers["Industry"].astype(str).str.strip() == industry]
     print(f"\n🔍 Industry debug:")
     print(f"   Exporter industry        : '{industry}'")
-    print(f"   Unique buyer industries  : {sorted(buyers['Industry'].astype(str).unique().tolist())}")
     print(f"   Same-industry buyers     : {len(same_ind_buyers)}")
-    if len(same_ind_buyers) == 0:
-        print(f"   ⚠️  MISMATCH — no buyers with industry '{industry}' found")
-        print(f"       All pairs will get -30 penalty → scores collapse to 20–59")
 
-    # ── Match pairs ───────────────────────────────────────────────────
     print("🔗 Matching …")
     adjuster = NewsRiskAdjuster(news, lookback_days=NEWS_LOOKBACK_DAYS)
     engine = MatchmakingEngine(user_df, buyers, adjuster, top_n=100)
     matches  = engine.run()
 
-    # ── ML match score ────────────────────────────────────────────────
     print("🎯 ML match scoring …")
     match_model = MatchModel.load(match_model_path)
     matches["ml_match_score"] = match_model.predict(matches, user_df, buyers)
 
-    # ── Sort & rank ───────────────────────────────────────────────────
-    # ── Sort & rank ───────────────────────────────────────────────────
-    # Keep only highest scoring row per Buyer_ID (removes duplicates)
     matches = (
         matches
         .sort_values("ml_match_score", ascending=False)
@@ -339,7 +252,6 @@ def run_match_for_user_supabase(
         return "Weak"
     matches["match_label"] = matches["ml_match_score"].apply(label)
 
-    # ── Merge buyer metadata ──────────────────────────────────────────
     buyer_meta = buyers[[
         "Buyer_ID", "Country", "Industry", "buyer_score", "ml_intent_score"
     ]].rename(columns={
@@ -348,13 +260,12 @@ def run_match_for_user_supabase(
     })
     output = matches.merge(buyer_meta, on="Buyer_ID", how="left")
 
-    # ── Final columns ─────────────────────────────────────────────────
     want = [
         "rank", "Buyer_ID", "Country", "Industry",
         "ml_match_score", "match_label", "match_score",
         "buyer_overall_score", "buyer_intent_score",
         "Preferred_Channel",
-        "base_similarity", "capacity_align", "news_delta", "engagement_bonus",  # ✅ correct
+        "base_similarity", "capacity_align", "news_delta", "engagement_bonus",
     ]
     output = output[[c for c in want if c in output.columns]].copy()
     output.rename(columns={
@@ -362,13 +273,12 @@ def run_match_for_user_supabase(
         "match_score":       "Rule_Match_Score",
         "match_label":       "Match_Label",
         "Preferred_Channel": "Best_Channel",
-        "base_similarity":   "Sim_Score",       # ✅ ADD
-        "capacity_align":    "Cap_Score",        # ✅ ADD
-        "news_delta":        "News_Score",       # ✅ ADD
-        "engagement_bonus":  "Engage_Score",     # ✅ ADD
+        "base_similarity":   "Sim_Score",
+        "capacity_align":    "Cap_Score",
+        "news_delta":        "News_Score",
+        "engagement_bonus":  "Engage_Score",
     }, inplace=True)
 
-    # ── Preview ───────────────────────────────────────────────────────
     print(f"\n{'═'*65}")
     print(f"  TOP MATCHES FOR: {user_row.get('Company_Name','User')} ({user_row.get('Industry','')})")
     print(f"{'═'*65}")
@@ -378,7 +288,6 @@ def run_match_for_user_supabase(
         print(f"  #{int(r['rank']):<3} {r['Buyer_ID']:<12} {r['Country']:<14} "
               f"{r['Industry']:<16} {r['Match_Score']:>6.1f}  {r['Match_Label']}")
 
-    # ── Save ──────────────────────────────────────────────────────────
     if save_csv:
         output.to_csv(output_csv, index=False)
         print(f"\n💾 Saved → {output_csv}")
@@ -386,12 +295,10 @@ def run_match_for_user_supabase(
     print(f"\n✅ {len(output)} matches ready.\n")
     return output
 
-
 # ── CLI ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Match a user exporter against all buyers")
-    p.add_argument("--user_id",      default=None,          help="Supabase user UUID")
-    p.add_argument("--demo",         action="store_true",   help="Use random mock user (no Supabase needed)")
+    p.add_argument("--user_id",      required=True,         help="Supabase user UUID")
     p.add_argument("--buyers",       default=BUYER_CSV)
     p.add_argument("--news",         default=NEWS_CSV)
     p.add_argument("--intent_model", default=INTENT_MODEL_PATH)
@@ -401,7 +308,6 @@ if __name__ == "__main__":
 
     run_match_for_user_supabase(
         user_id           = args.user_id,
-        demo              = args.demo,
         buyer_csv         = args.buyers,
         news_csv          = args.news,
         intent_model_path = args.intent_model,

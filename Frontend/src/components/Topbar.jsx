@@ -1,17 +1,11 @@
-/* Topbar.jsx
-   Props:
-     placeholder  – search input placeholder text
-     userName     – display name
-     userRole     – role string
-     avatarText   – 2-char avatar initials
-     avatarStyle  – inline style object for avatar gradient
-*/
+/* Topbar.jsx */
 export default function Topbar({
   placeholder = 'Search...',
-  userName    = 'John Doe',
-  userRole    = 'Senior Analyst',
-  avatarText  = 'JD',
+  userName    = 'Arjun Mehta',
+  userRole    = 'Senior Trade Analyst',
+  avatarText  = 'AM',
   avatarStyle = {},
+  navigate,
 }) {
   return (
     <div className="topbar">
@@ -23,7 +17,12 @@ export default function Topbar({
       </div>
 
       <div className="topbar-right">
-        <div className="user-chip">
+        <div
+          className="user-chip"
+          style={{ cursor: navigate ? 'pointer' : 'default' }}
+          onClick={() => navigate && navigate('profile')}
+          title="View Profile"
+        >
           <div className="info">
             <div className="name">{userName}</div>
             <div className="role">{userRole}</div>

@@ -263,6 +263,7 @@ export function MatchesMap({
   partners = [],
   homeLat  = -14.2,    // Brazil
   homeLng  = -51.9,
+  homeCountry = '',
 }) {
   const mapRef       = useRef(null)
   const instanceRef  = useRef(null)
@@ -352,7 +353,23 @@ export function MatchesMap({
     geoLayersRef.current.push(allLayer)
 
     // 2 ── Draw animated dotted curves: Home → each partner
-    const home = [homeLat, homeLng]
+    // determine home coordinates: prefer homeCountry if provided
+    let home = [homeLat, homeLng]
+    if (homeCountry && geoData) {
+      const feature = geoData.features.find(f =>
+        (f.properties.name || '').toLowerCase() === (homeCountry || '').toLowerCase() ||
+        ((f.properties.formal_en || '').toLowerCase() === (homeCountry || '').toLowerCase())
+      )
+      if (feature) {
+        try {
+          const tmpLayer = L.geoJSON(feature)
+          const center = tmpLayer.getBounds().getCenter()
+          home = [center.lat, center.lng]
+        } catch (e) {
+          // fallback to defaults
+        }
+      }
+    }
 
     partners.forEach(partner => {
       if (partner.lat == null || partner.lng == null) return
@@ -450,6 +467,13 @@ export function MatchesMap({
     if (!instanceRef.current || !geoDataRef.current || !L) return
     renderAll(instanceRef.current, geoDataRef.current, partners, L)
   }, [partners])
+  
+  /* ── Re-render when homeCountry changes ── */
+  useEffect(() => {
+    const L = window.L
+    if (!instanceRef.current || !geoDataRef.current || !L) return
+    renderAll(instanceRef.current, geoDataRef.current, partners, L)
+  }, [homeCountry])
 
   return (
     <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden' }}>

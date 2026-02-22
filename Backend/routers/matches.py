@@ -10,9 +10,8 @@ def get_matches(user=Depends(get_current_user)):
         .select("id").eq("user_id", user.id).single().execute()
 
     result = supabase.table("matches")\
-        .select("*, buyers(*)")\
+        .select("*, buyers(company_name, country, industry, preferred_channel)")\
         .eq("exporter_id", exporter.data["id"])\
-        .eq("status", "accepted")\
         .order("match_rank")\
         .execute()
 
