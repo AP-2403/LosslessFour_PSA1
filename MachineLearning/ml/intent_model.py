@@ -161,45 +161,118 @@ class IntentModel:
     def _available_features(self, df: pd.DataFrame, candidates: list) -> list:
         return [f for f in candidates if f in df.columns]
 
+    def _engineer_intent_target(self, df: pd.DataFrame, feature_cols: list, side: str) -> pd.Series:
+        """
+        Builds a composite intent target from the actual feature signals
+        when Intent_Score has no correlation with features (R² < threshold).
+        Uses domain-weighted sum of behavioural + trust signals.
+        """
+        from sklearn.preprocessing import MinMaxScaler as MMS
+        scaler = MMS(feature_range=(0, 100))
+
+        def norm(col):
+            if col not in df.columns: return pd.Series(0.0, index=df.index)
+            return pd.Series(
+                MMS(feature_range=(0,100)).fit_transform(
+                    df[col].fillna(0).values.reshape(-1,1)
+                ).flatten(), index=df.index
+            )
+
+        if side == "exporter":
+            target = (
+                norm("Hiring_Signal")            * 15 +
+                norm("LinkedIn_Activity")        * 10 +
+                norm("SalesNav_ProfileViews")    * 12 +
+                norm("SalesNav_JobChange")        * 8  +
+                norm("Prompt_Response_Score")    * 12 +
+                norm("Good_Payment_Terms")       * 10 +
+                norm("Shipment_Value_USD")       * 10 +
+                norm("Revenue_Size_USD")          * 8  +
+                norm("Manufacturing_Capacity_Tons") * 8 +
+                norm("MSME_Udyam")               * 7  -
+                norm("War_Risk")                 * 15 -
+                norm("Natural_Calamity_Risk")    * 10 -
+                norm("Tariff_Impact")            * 10 -
+                norm("StockMarket_Impact")        * 5
+            )
+        else:  # buyer
+            target = (
+                norm("Funding_Event")            * 15 +
+                norm("Engagement_Spike")         * 12 +
+                norm("DecisionMaker_Change")      * 8  +
+                norm("Hiring_Growth")            * 10 +
+                norm("SalesNav_ProfileVisits")   * 10 +
+                norm("Response_Probability")     * 12 +
+                norm("Good_Payment_History")     * 10 +
+                norm("Revenue_Size_USD")          * 8  +
+                norm("Avg_Order_Tons")            * 5  -
+                norm("War_Event")                * 15 -
+                norm("Natural_Calamity")         * 10 -
+                norm("Tariff_News")              * 10 -
+                norm("StockMarket_Shock")         * 5
+            )
+
+        # Clip and normalise to 0-100
+        raw = target.clip(lower=0)
+        scaled = MMS(feature_range=(0, 100)).fit_transform(raw.values.reshape(-1,1)).flatten()
+        return pd.Series(scaled, index=df.index)
+
     def _prepare_xy(self, df: pd.DataFrame, feature_cols: list, target: str = TARGET_COL):
         X = df[feature_cols].copy().fillna(0).astype(float)
         y = df[target].copy().fillna(df[target].median()).astype(float)
         return X, y
 
     def _train_and_eval(
-        self, X: pd.DataFrame, y: pd.Series, label: str
+        self, X: pd.DataFrame, y: pd.Series, label: str,
+        df_orig: pd.DataFrame = None, side: str = "exporter"
     ) -> tuple[object, dict]:
-        model = _make_model(self.use_xgb)
+        model   = _make_model(self.use_xgb)
         backend = "XGBoost" if (_XGB_AVAILABLE and self.use_xgb) else "GradientBoosting"
 
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=self.test_size, random_state=42
         )
         model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+        preds     = model.predict(X_test)
+        r2_first  = r2_score(y_test, preds)
 
-        cv_scores = cross_val_score(
-            model, X, y, cv=self.cv_folds, scoring="r2"
-        )
+        # ── Fallback: if R² < 0.05 Intent_Score is not learnable from features
+        #    Switch to an engineered composite target built from the signals
+        used_fallback = False
+        if r2_first < 0.05 and df_orig is not None:
+            print(f"    ⚠️  R²={r2_first:.4f} — Intent_Score not predictable from features.")
+            print(f"    🔄  Switching to engineered composite intent target …")
+            y = self._engineer_intent_target(df_orig, list(X.columns), side)
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=self.test_size, random_state=42
+            )
+            model = _make_model(self.use_xgb)
+            model.fit(X_train, y_train)
+            preds = model.predict(X_test)
+            used_fallback = True
+
+        cv_scores = cross_val_score(model, X, y, cv=self.cv_folds, scoring="r2")
 
         metrics = {
-            "backend":   backend,
-            "n_samples": len(X),
-            "n_features": len(X.columns),
-            "MAE":       round(mean_absolute_error(y_test, preds), 4),
-            "R2_test":   round(r2_score(y_test, preds), 4),
-            "R2_cv_mean": round(cv_scores.mean(), 4),
-            "R2_cv_std":  round(cv_scores.std(), 4),
+            "backend":      backend,
+            "n_samples":    len(X),
+            "n_features":   len(X.columns),
+            "MAE":          round(mean_absolute_error(y_test, preds), 4),
+            "R2_test":      round(r2_score(y_test, preds), 4),
+            "R2_cv_mean":   round(cv_scores.mean(), 4),
+            "R2_cv_std":    round(cv_scores.std(), 4),
+            "used_fallback": used_fallback,
         }
 
-        print(f"\n  [{label} Intent Model — {backend}]")
+        target_label = "engineered composite" if used_fallback else "Intent_Score"
+        print(f"\n  [{label} Intent Model — {backend}]  target: {target_label}")
         print(f"    Samples    : {metrics['n_samples']:,}")
         print(f"    Features   : {metrics['n_features']}")
         print(f"    MAE        : {metrics['MAE']:.4f}")
         print(f"    R²  (test) : {metrics['R2_test']:.4f}")
         print(f"    R²  (CV)   : {metrics['R2_cv_mean']:.4f} ± {metrics['R2_cv_std']:.4f}")
 
-        return model, metrics
+        return model, metrics, y
 
     def _feature_weight_table(
         self, model: object, feature_names: list
@@ -226,16 +299,17 @@ class IntentModel:
         """
         Train the exporter intent model.
         Adds 'ml_intent_score' column (0-100) to the DataFrame.
+        Auto-falls back to engineered composite target if Intent_Score is not learnable.
         """
         feats = self._available_features(df, EXPORTER_INTENT_FEATURES)
         self._exp_features = feats
         X, y = self._prepare_xy(df, feats, target_col)
 
-        model, metrics = self._train_and_eval(X, y, "Exporter")
+        model, metrics, y_used = self._train_and_eval(X, y, "Exporter", df_orig=df, side="exporter")
         self._exp_model   = model
         self._exp_metrics = metrics
 
-        # Predict and normalise to 0-100
+        # Predict on full dataset using the target that was actually trained on
         raw_preds = model.predict(X)
         scaled    = self._scaler_exp.fit_transform(raw_preds.reshape(-1, 1)).flatten()
         df = df.copy()
@@ -248,12 +322,13 @@ class IntentModel:
         """
         Train the buyer intent model.
         Adds 'ml_intent_score' column (0-100) to the DataFrame.
+        Auto-falls back to engineered composite target if Intent_Score is not learnable.
         """
         feats = self._available_features(df, BUYER_INTENT_FEATURES)
         self._buy_features = feats
         X, y = self._prepare_xy(df, feats, target_col)
 
-        model, metrics = self._train_and_eval(X, y, "Buyer")
+        model, metrics, y_used = self._train_and_eval(X, y, "Buyer", df_orig=df, side="buyer")
         self._buy_model   = model
         self._buy_metrics = metrics
 

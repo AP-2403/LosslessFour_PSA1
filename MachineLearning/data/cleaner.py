@@ -20,6 +20,13 @@ class DataCleaner:
     # ── EXPORTERS ────────────────────────────────────────────────────
     def clean_exporters(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        if "Industry" in df.columns:
+            df["Industry"] = (
+                df["Industry"]
+                .str.strip()
+                .str.title()
+                .str.replace(r"\s+", " ", regex=True)
+            )
         col_defaults = {
             "Manufacturing_Capacity_Tons": 0,
             "Revenue_Size_USD":            0,
@@ -55,6 +62,13 @@ class DataCleaner:
     # ── BUYERS ───────────────────────────────────────────────────────
     def clean_buyers(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        if "Industry" in df.columns:
+            df["Industry"] = (
+                df["Industry"]
+                .str.strip()
+                .str.title()
+                .str.replace(r"\s+", " ", regex=True)
+            )
         force_numeric = [
             "Funding_Event", "Good_Payment_History", "Engagement_Spike",
             "SalesNav_ProfileVisits", "DecisionMaker_Change", "Hiring_Growth",

@@ -21,20 +21,20 @@ BUYER_WEIGHTS = {
 }
 
 # ── Matchmaking tuning ────────────────────────────────────────────────────
-MATCH_TOP_N                  = 5       # Top-N buyers recommended per exporter
-INDUSTRY_MISMATCH_PENALTY    = 30.0   # Points deducted for different industry
-CAPACITY_WEIGHT              = 0.15   # Weight of capacity-alignment in final score
+MATCH_TOP_N                  = 10      # Top-N buyers recommended per exporter
+INDUSTRY_MISMATCH_PENALTY    = 50.0   # Points deducted for different industry
+CAPACITY_WEIGHT              = 0.25   # Weight of capacity-alignment in final score
 COSINE_WEIGHT                = 0.55   # vs euclidean in base similarity
 EUCLIDEAN_WEIGHT             = 0.45
 
 # ── Engagement event bonuses ──────────────────────────────────────────────
 ENGAGEMENT_BONUSES = {
-    "Funding_Event":         3.0,
-    "DecisionMaker_Change":  2.5,
-    "Engagement_Spike":      2.0,
-    "Hiring_Signal":         1.5,  # exporter-side signal
+    "Funding_Event":         6.0,
+    "DecisionMaker_Change":  5.0,
+    "Engagement_Spike":      4.0,
+    "Hiring_Signal":         3.0,  # exporter-side signal
 }
-CERT_MATCH_BONUS             = 5.0    # Both sides share a non-null certification
+CERT_MATCH_BONUS             = 8.0    # Both sides share a non-null certification
 
 # ── News risk adjuster ────────────────────────────────────────────────────
 NEWS_LOOKBACK_DAYS           = 90
@@ -43,7 +43,7 @@ NEWS_WAR_PENALTY_PER_EVENT   = 5
 NEWS_CALAMITY_PENALTY        = 4
 NEWS_STOCK_PENALTY_SCALE     = 20
 NEWS_TARIFF_BONUS_SCALE      = 15     # Tariff reduction → opportunity
-NEWS_DELTA_CLIP              = (-20, 10)
+NEWS_DELTA_CLIP              = (-30, 15)
 
 # ── Certification values (non-null = trusted) ─────────────────────────────
 NULL_CERTIFICATIONS = {"None", "Unknown", ""}

@@ -80,11 +80,14 @@ def _print_weight_table(title: str, df: pd.DataFrame) -> None:
     print(f"  {'Feature':<32} {'Direction':<12} {'Weight':>10}")
     print(f"  {div}")
     for _, row in df.iterrows():
-        sign   = "+" if row["signed_weight"] >= 0 else ""
+        is_positive = row["direction"] == "POSITIVE"
+        sign        = "+" if is_positive else "-"
+        abs_weight  = abs(row["signed_weight"])
+        icon        = "✅ " if is_positive else "⚠️  "
         print(
             f"  {row['feature']:<32} "
-            f"{'✅ ' + row['direction'] if row['direction'] == 'POSITIVE' else '⚠️  ' + row['direction']:<12} "
-            f"  {sign}{row['signed_weight']:>9.5f}"
+            f"{icon + row['direction']:<12} "
+            f"  {sign}{abs_weight:>9.5f}"
         )
     print(f"  {div}")
     pos = (df["direction"] == "POSITIVE").sum()

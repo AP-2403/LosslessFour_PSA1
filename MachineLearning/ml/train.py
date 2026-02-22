@@ -51,19 +51,32 @@ def run_training(
     print("╔══════════════════════════════════════════════════════════╗")
     print("║      SWIPE TO EXPORT — ML Training Pipeline             ║")
     print("╚══════════════════════════════════════════════════════════╝\n")
+    files_exist = (
+        exporter_csv and os.path.exists(exporter_csv) and
+        buyer_csv    and os.path.exists(buyer_csv)    and
+        news_csv     and os.path.exists(news_csv)
+    )
 
-    # ── STEP 1: Load data ─────────────────────────────────────────────
-    if exporter_csv and buyer_csv and news_csv:
+    if files_exist:
         print("📂 Loading from CSV files …")
         exporters = pd.read_csv(exporter_csv, parse_dates=["Date"])
         buyers    = pd.read_csv(buyer_csv,    parse_dates=["Date"])
         news      = pd.read_csv(news_csv,     parse_dates=["Date"])
     else:
+        if exporter_csv and not os.path.exists(exporter_csv):
+            print(f"⚠️  CSV not found: {exporter_csv} — falling back to synthetic data")
         print("🔧 Generating synthetic demo data …")
         news, exporters, buyers = generate_synthetic_data()
 
+    # ── STEP 1: Load data ─────────────────────────────────────────────
+
     print(f"   Exporters: {len(exporters):,}  |  Buyers: {len(buyers):,}  |  News: {len(news):,}")
 
+    # ✅ FIX 5A — distribution check so you know if real vs synthetic ranges differ
+    print(f"\n📊 Feature distribution check:")
+    print(f"   Buyer Revenue     : min=${buyers['Revenue_Size_USD'].min():,.0f}  max=${buyers['Revenue_Size_USD'].max():,.0f}")
+    print(f"   Buyer Order Tons  : min={buyers['Avg_Order_Tons'].min():.0f}  max={buyers['Avg_Order_Tons'].max():.0f}")
+    print(f"   Buyer Industries  : {sorted(buyers['Industry'].unique().tolist())}")
     # ── STEP 2: Clean ────────────────────────────────────────────────
     print("\n🧹 Cleaning data …")
     with tqdm(total=3, desc="   Cleaning", unit="file") as pbar:
@@ -135,12 +148,61 @@ def run_training(
         print(f"\n⚠️  Found existing model at {match_model_path}")
         print("   Delete it first to retrain from scratch.")
 
+    # ── Build engineered labels (vectorized) ─────────────────────────
+    print("\n🔧 Engineering better match labels …")
+
+    # Pull only needed columns
+    exp_cols = exporters[["Exporter_ID","Manufacturing_Capacity_Tons","Intent_Score",
+                       "Good_Payment_Terms","War_Risk","Natural_Calamity_Risk",
+                       "Hiring_Signal"]].drop_duplicates("Exporter_ID")
+
+    buy_cols = buyers[["Buyer_ID","Avg_Order_Tons","Intent_Score","Good_Payment_History",
+                    "War_Event","Natural_Calamity","Funding_Event",
+                    "Engagement_Spike","DecisionMaker_Change"]].drop_duplicates("Buyer_ID")
+
+    # Rename to avoid column name conflicts
+    exp_cols = exp_cols.add_prefix("e_").rename(columns={"e_Exporter_ID":"Exporter_ID"})
+    buy_cols = buy_cols.add_prefix("b_").rename(columns={"b_Buyer_ID":"Buyer_ID"})
+
+    # Safe merge — no row explosion
+    m = matches.reset_index(drop=True)
+    m = m.merge(exp_cols, on="Exporter_ID", how="left")
+    m = m.merge(buy_cols, on="Buyer_ID",    how="left")
+
+    # Compute components
+    industry_match = (m["Exporter_Industry"] == m["Buyer_Industry"]).astype(float)
+    cap_min        = m[["e_Manufacturing_Capacity_Tons","b_Avg_Order_Tons"]].min(axis=1)
+    cap_max        = m[["e_Manufacturing_Capacity_Tons","b_Avg_Order_Tons"]].max(axis=1) + 1e-9
+    cap_ratio      = cap_min / cap_max
+    intent_product = (m["e_Intent_Score"].fillna(50)/100) * (m["b_Intent_Score"].fillna(50)/100)
+    trust          = (m["e_Good_Payment_Terms"].fillna(0) + m["b_Good_Payment_History"].fillna(0)) / 2
+    risk_penalty   = (m["e_War_Risk"].fillna(0) + m["b_War_Event"].fillna(0)*0.1 +
+                  m["e_Natural_Calamity_Risk"].fillna(0) + m["b_Natural_Calamity"].fillna(0)*0.1)
+    engagement     = (m["b_Funding_Event"].fillna(0) + m["b_Engagement_Spike"].fillna(0) +
+                  m["b_DecisionMaker_Change"].fillna(0) + m["e_Hiring_Signal"].fillna(0)) / 4
+
+    raw = (
+    industry_match * 35 +
+    cap_ratio      * 20 +
+    intent_product * 20 +
+    trust          * 10 +
+    engagement     * 10 -
+    risk_penalty   * 15
+    )
+
+    matches = matches.reset_index(drop=True)
+    matches["engineered_label"] = (raw * 100 / 95).clip(0, 100).round(2).values
+
+    print(f"   Label range : {matches['engineered_label'].min():.1f} → {matches['engineered_label'].max():.1f}")
+    print(f"   Label std   : {matches['engineered_label'].std():.1f}  (want > 20)")
+
+    # ── Train MatchModel on engineered labels ─────────────────────────
     print("\n🎯 Training MatchModel …")
     print(f"   Pairs to train on: {len(matches):,}")
     match_model = MatchModel(use_xgb=True)
 
     with tqdm(total=1, desc="   Match training", unit="model") as pbar:
-        match_model.fit(matches, exporters, buyers, target_col=label_col)
+        match_model.fit(matches, exporters, buyers, target_col="engineered_label")
         pbar.update(1)
 
     print("🎯 Predicting ML match scores …")
@@ -188,14 +250,14 @@ def run_training(
 # ── CLI ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Swipe to Export — ML Training")
-    p.add_argument("--exporters",     default=None)
-    p.add_argument("--buyers",        default=None)
-    p.add_argument("--news",          default=None)
-    p.add_argument("--match_labels",  default=None)
-    p.add_argument("--label_col",     default="match_score")
-    p.add_argument("--top_n",         default=MATCH_TOP_N, type=int)
-    p.add_argument("--save_dir",      default="ml/saved")
-    p.add_argument("--output",        default="ml_match_results.csv")
+    p.add_argument("--exporters",    default="data/Exporter_LiveSignals_v5_Updated.csv")
+    p.add_argument("--buyers",       default="data/Importer_LiveSignals_v5_Updated.csv")
+    p.add_argument("--news",         default="data/Global_News_LiveSignals_Updated.csv")
+    p.add_argument("--match_labels", default=None)
+    p.add_argument("--label_col",    default="match_score")
+    p.add_argument("--top_n",        default=MATCH_TOP_N, type=int)
+    p.add_argument("--save_dir",     default="ml/saved")
+    p.add_argument("--output",       default="ml_match_results.csv")
     args = p.parse_args()
 
     run_training(

@@ -114,22 +114,34 @@ class MatchModel:
         Build interaction features from exporter + buyer columns
         for each pair row in matches_df.
         """
-        exp = exporters_df.copy().set_index("Exporter_ID") \
-            if "Exporter_ID" in exporters_df.columns else exporters_df.copy()
-        buy = buyers_df.copy().set_index("Buyer_ID") \
-            if "Buyer_ID" in buyers_df.columns else buyers_df.copy()
+        exp = exporters_df.copy()
+        buy = buyers_df.copy()
+
+        # Set index safely — handle both user_df (no Exporter_ID) and normal exporters
+        if "Exporter_ID" in exp.columns:
+            exp = exp.set_index("Exporter_ID")
+        if "Buyer_ID" in buy.columns:
+            buy = buy.set_index("Buyer_ID")
 
         rows = []
         for _, row in matches_df.iterrows():
             eid = row.get("Exporter_ID")
             bid = row.get("Buyer_ID")
 
-            e = exp.loc[eid] if eid in exp.index else pd.Series(dtype=float)
-            b = buy.loc[bid] if bid in buy.index else pd.Series(dtype=float)
+            # Always return a single Series — if multiple rows match take first
+            if eid in exp.index:
+                e = exp.loc[eid]
+                if isinstance(e, pd.DataFrame):
+                    e = e.iloc[0]
+            else:
+                e = pd.Series(dtype=float)
 
-            # If duplicate IDs exist, loc returns DataFrame — take first row only
-            if isinstance(e, pd.DataFrame): e = e.iloc[0]
-            if isinstance(b, pd.DataFrame): b = b.iloc[0]
+            if bid in buy.index:
+                b = buy.loc[bid]
+                if isinstance(b, pd.DataFrame):
+                    b = b.iloc[0]
+            else:
+                b = pd.Series(dtype=float)
 
             def ev(col, default=None): return e.get(col, default)
             def bv(col, default=None): return b.get(col, default)
@@ -259,17 +271,69 @@ class MatchModel:
 
     # ── Predict ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _spread_scores(
+        raw: np.ndarray,
+        industry_match: np.ndarray = None,
+        target_min: float = 20.0,
+        target_max: float = 100.0,
+        same_industry_floor: float = 50.0,   # same-industry matches always start here
+    ) -> np.ndarray:
+        """
+        Spreads compressed scores across a wider range using rank-based
+        percentile normalisation — but preserves the hard rule that
+        same-industry matches always score above cross-industry matches.
+
+        same_industry (1.0) → spread in [same_industry_floor, target_max]
+        cross-industry (0.0) → spread in [target_min, same_industry_floor - 1]
+        """
+        from scipy.stats import rankdata
+
+        result = np.zeros_like(raw, dtype=float)
+
+        for is_same, lo, hi in [
+            (True,  same_industry_floor, target_max),
+            (False, target_min,          same_industry_floor - 1),
+        ]:
+            if industry_match is not None:
+                mask = (industry_match == 1.0) if is_same else (industry_match != 1.0)
+            else:
+                mask = np.ones(len(raw), dtype=bool)  # no info → spread all together
+
+            subset = raw[mask]
+            if len(subset) == 0:
+                continue
+            if len(subset) == 1:
+                result[mask] = (lo + hi) / 2
+                continue
+
+            ranks      = rankdata(subset, method="average")
+            percentile = (ranks - 1) / (len(ranks) - 1)
+            result[mask] = lo + percentile * (hi - lo)
+
+        return result.round(2)
+
     def predict(
         self,
         matches_df:   pd.DataFrame,
         exporters_df: pd.DataFrame,
         buyers_df:    pd.DataFrame,
+        spread:       bool = True,
     ) -> np.ndarray:
+        """
+        Predict match scores.
+        spread=True  → rank-based spreading with industry-match grouping (recommended)
+        spread=False → raw model output (for debugging)
+        """
         if self._model is None:
             raise RuntimeError("Call fit() first.")
-        X    = self._engineer_pair_features(matches_df, exporters_df, buyers_df)
-        raw  = self._model.predict(X[self._features])
-        return np.clip(raw, 0, 100).round(2)
+        X   = self._engineer_pair_features(matches_df, exporters_df, buyers_df)
+        raw = self._model.predict(X[self._features])
+        raw = np.clip(raw, 0, 100)
+        if spread:
+            industry_match = X["industry_match"].values if "industry_match" in X.columns else None
+            return self._spread_scores(raw, industry_match=industry_match)
+        return raw.round(2)
 
     # ── Weights table ─────────────────────────────────────────────────
 

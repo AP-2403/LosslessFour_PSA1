@@ -31,26 +31,29 @@ from ml.match_model     import MatchModel
 from config             import NEWS_LOOKBACK_DAYS
 
 # ── Config ────────────────────────────────────────────────────────────────────
-INTENT_MODEL_PATH = "ml/saved/intent_model.pkl"
-MATCH_MODEL_PATH  = "ml/saved/match_model.pkl"
-BUYER_CSV         = "data/Importer_LiveSignals_v5_Updated.csv"
-NEWS_CSV          = "data/Global_News_LiveSignals_Updated.csv"
+# Replace the 4 path constants at the top with these:
+_ML_ROOT = r"C:\Users\Vipin\Downloads\exim_swipe\MachineLearning"  # MachineLearning/
+
+INTENT_MODEL_PATH = os.path.join(_ML_ROOT, "ml",   "saved", "intent_model.pkl")
+MATCH_MODEL_PATH  = os.path.join(_ML_ROOT, "ml",   "saved", "match_model.pkl")
+BUYER_CSV         = os.path.join(_ML_ROOT, "data",  "Importer_LiveSignals_v5_Updated.csv")
+NEWS_CSV          = os.path.join(_ML_ROOT, "data",  "Global_News_LiveSignals_Updated.csv")
 
 # ── Supabase column → internal field mapping ──────────────────────────────────
 FIELD_MAP = {
-    "id":                           "Exporter_ID",
-    "company_name":                 "Company_Name",
-    "industry":                     "Industry",
-    "country":                      "Country",
-    "manufacturing_capacity_tons":  "Manufacturing_Capacity_Tons",
-    "revenue_size_usd":             "Revenue_Size_USD",
-    "intent_score":                 "Intent_Score",
-    "prompt_response_score":        "Prompt_Response_Score",
-    "war_risk":                     "War_Risk",
-    "natural_calamity_risk":        "Natural_Calamity_Risk",
-    "currency_shift":               "Currency_Shift",
-    "certifications":               "Certifications",
-    "target_countries":             "Target_Countries",
+    "user_id":                  "Exporter_ID",
+    "company_name":             "Company_Name",
+    "industry":                 "Industry",
+    "hq_country":               "Country",
+    "target_countries":         "Target_Countries",   # List → join to "UK,Germany,UAE"
+    "annual_revenue_usd":       "Revenue_Size_USD",
+    "manufacturing_capacity":   "Manufacturing_Capacity_Tons",
+    "certifications":           "Certification",
+    "good_payment_terms":       "Good_Payment_Terms",
+    "prompt_response_score":    "Prompt_Response_Score",
+    "team_size":                "Team_Size",
+    "is_hiring":                "Hiring_Signal",
+    "linkedin_active":          "LinkedIn_Activity",
 }
 
 DEFAULTS = {
@@ -68,13 +71,16 @@ DEFAULTS = {
 
 # ── MOCK DATA — used when Supabase is not set up yet ─────────────────────────
 MOCK_COMPANIES = [
-    ("AgroVista Exports Ltd.",     "Agri-Foods",   "India",    "UK,Germany,UAE"),
-    ("SteelCore Industries",       "Steel",         "India",    "USA,Germany"),
-    ("TextileCraft Pvt. Ltd.",     "Textiles",      "India",    "UK,France,USA"),
-    ("ChemPro Solutions",          "Chemicals",     "India",    "UAE,Singapore,UK"),
-    ("LeatherLux International",   "Leather",       "India",    "France,Germany,UAE"),
-    ("AutoParts Global",           "Auto Parts",    "India",    "USA,Germany,UAE"),
-    ("ElectroHub Exports",         "Electronics",   "India",    "UK,USA,Singapore"),
+    ("AutoParts Global",           "Auto Parts",      "India", "USA,Germany,UAE"),
+    ("ChemPro Solutions",          "Chemicals",       "India", "UAE,Singapore,UK"),
+    ("ElectroHub Exports",         "Electronics",     "India", "UK,USA,Singapore"),
+    ("BuildTech Engineering",      "Engineering",     "India", "USA,Germany,UAE"),
+    ("SoftServe IT",               "IT Software",     "India", "UK,USA,Singapore"),
+    ("MachineCraft Industries",    "Machinery",       "India", "Germany,USA,UAE"),
+    ("MediTech Exports",           "Medical Devices", "India", "USA,UK,Germany"),
+    ("PharmaLink India",           "Pharmaceuticals", "India", "UK,USA,Germany"),
+    ("SolarEdge Exports",          "Solar",           "India", "Germany,UAE,USA"),
+    ("TextileCraft Pvt. Ltd.",     "Textiles",        "India", "UK,France,USA"),
 ]
 
 def generate_mock_user() -> dict:
@@ -158,7 +164,16 @@ def fetch_user_from_supabase(user_id: str) -> dict:
         user_row = {}
         for sb_field, internal_field in FIELD_MAP.items():
             value = raw.get(sb_field)
-            user_row[internal_field] = value if value is not None else DEFAULTS.get(internal_field, "Unknown")
+
+            # Convert List → comma string (target_countries, certifications)
+            if isinstance(value, list):
+                value = ",".join(str(v) for v in value)
+
+            # Convert bool → int (good_payment_terms, is_hiring, linkedin_active)
+            if isinstance(value, bool):
+                value = int(value)
+
+            user_row[internal_field] = value if value is not None else DEFAULTS.get(internal_field, 0)
 
         user_row["Date"] = datetime.today().strftime("%Y-%m-%d")
         print(f"✅ Loaded from Supabase: {user_row['Company_Name']} ({user_row['Industry']}, {user_row['Country']})")
@@ -267,30 +282,7 @@ def run_match_for_user_supabase(
     user_df["Intent_Score"] = user_df["ml_intent_score"]
     buyers["Intent_Score"]  = buyers["ml_intent_score"]
     # Safety net — fill any scorer column missing from user profile
-    scorer_defaults = {
-        "Good_Payment_Terms":          0,
-        "Prompt_Response_Score":       5.0,
-        "Certification":               None,
-        "Manufacturing_Capacity_Tons": 1000,
-        "Revenue_Size_USD":            500000,
-        "Team_Size":                   50,
-        "Shipment_Value_USD":          100000,
-        "Intent_Score":                50,
-        "Hiring_Signal":               0,
-        "LinkedIn_Activity":           50.0,
-        "SalesNav_ProfileViews":       100,
-        "SalesNav_JobChange":          0,
-        "Tariff_Impact":               0.0,
-        "War_Risk":                    0.1,
-        "Natural_Calamity_Risk":       0.1,
-        "StockMarket_Impact":          0.0,
-        "Currency_Shift":              0.0,
-        "Quantity_Tons":               500,      # ← add
-        "MSME_Udyam":                  0, 
-    }
-    for col, val in scorer_defaults.items():
-        if col not in user_df.columns:
-            user_df[col] = val
+
     user_df = scorer.score_exporters(user_df)
     buyers  = scorer.score_buyers(buyers)
 
@@ -303,9 +295,20 @@ def run_match_for_user_supabase(
         filtered = buyers[buyers["Country"].isin(targets)].copy()
         if len(filtered) > 0:
             print(f"🌍 Country filter → {len(filtered)} buyers in: {', '.join(targets)}")
-            buyers = filtered
+            buyers = filtered.reset_index(drop=True)   # ✅ fix index mismatch
         else:
             print(f"⚠️  No buyers found in {targets} — showing all countries.")
+            buyers = buyers.reset_index(drop=True)     # ✅ fix index mismatch
+
+    industry = str(user_row.get("Industry", "")).strip()       # ✅ dict → scalar string
+    same_ind_buyers = buyers[buyers["Industry"].astype(str).str.strip() == industry]
+    print(f"\n🔍 Industry debug:")
+    print(f"   Exporter industry        : '{industry}'")
+    print(f"   Unique buyer industries  : {sorted(buyers['Industry'].astype(str).unique().tolist())}")
+    print(f"   Same-industry buyers     : {len(same_ind_buyers)}")
+    if len(same_ind_buyers) == 0:
+        print(f"   ⚠️  MISMATCH — no buyers with industry '{industry}' found")
+        print(f"       All pairs will get -30 penalty → scores collapse to 20–59")
 
     # ── Match pairs ───────────────────────────────────────────────────
     print("🔗 Matching …")
@@ -319,7 +322,14 @@ def run_match_for_user_supabase(
     matches["ml_match_score"] = match_model.predict(matches, user_df, buyers)
 
     # ── Sort & rank ───────────────────────────────────────────────────
-    matches = matches.sort_values("ml_match_score", ascending=False).reset_index(drop=True)
+    # ── Sort & rank ───────────────────────────────────────────────────
+    # Keep only highest scoring row per Buyer_ID (removes duplicates)
+    matches = (
+        matches
+        .sort_values("ml_match_score", ascending=False)
+        .drop_duplicates(subset=["Buyer_ID"], keep="first")
+        .reset_index(drop=True)
+    )
     matches["rank"] = matches.index + 1
 
     def label(s):
@@ -339,12 +349,12 @@ def run_match_for_user_supabase(
     output = matches.merge(buyer_meta, on="Buyer_ID", how="left")
 
     # ── Final columns ─────────────────────────────────────────────────
-    want   = [
+    want = [
         "rank", "Buyer_ID", "Country", "Industry",
         "ml_match_score", "match_label", "match_score",
         "buyer_overall_score", "buyer_intent_score",
         "Preferred_Channel",
-        "sim_score", "cap_score", "news_score", "engage_score",
+        "base_similarity", "capacity_align", "news_delta", "engagement_bonus",  # ✅ correct
     ]
     output = output[[c for c in want if c in output.columns]].copy()
     output.rename(columns={
@@ -352,6 +362,10 @@ def run_match_for_user_supabase(
         "match_score":       "Rule_Match_Score",
         "match_label":       "Match_Label",
         "Preferred_Channel": "Best_Channel",
+        "base_similarity":   "Sim_Score",       # ✅ ADD
+        "capacity_align":    "Cap_Score",        # ✅ ADD
+        "news_delta":        "News_Score",       # ✅ ADD
+        "engagement_bonus":  "Engage_Score",     # ✅ ADD
     }, inplace=True)
 
     # ── Preview ───────────────────────────────────────────────────────
